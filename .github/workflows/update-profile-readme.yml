@@ -1,0 +1,69 @@
+name: Update profile README
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-stats:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out profile repository
+        uses: actions/checkout@v4
+
+      - name: Refresh GitHub stats block
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = 'README.md';
+            const readme = fs.readFileSync(path, 'utf8');
+            const start = '<!-- PROFILE_STATS:START -->';
+            const end = '<!-- PROFILE_STATS:END -->';
+            const startIndex = readme.indexOf(start);
+            const endIndex = readme.indexOf(end);
+
+            if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
+              core.setFailed('README stats markers were not found.');
+              return;
+            }
+
+            const { data: profile } = await github.rest.users.getByUsername({ username: 'Davemasibo' });
+            const repositories = await github.paginate(github.rest.repos.listForUser, {
+              username: 'Davemasibo',
+              per_page: 100,
+              sort: 'updated'
+            });
+            const publicRepositories = repositories.filter((repository) => !repository.fork);
+            const latest = publicRepositories.find((repository) => repository.pushed_at);
+            const formatDate = (date) => new Intl.DateTimeFormat('en', {
+              dateStyle: 'long',
+              timeZone: 'UTC'
+            }).format(new Date(date));
+            const latestDate = latest ? formatDate(latest.pushed_at) : 'No recent activity';
+            const refreshed = formatDate(new Date());
+
+            const stats = [
+              `**${publicRepositories.length}** public repositories · **${profile.followers}** followers`,
+              `Latest repository activity: **${latestDate}** (${latest ? `[${latest.name}](${latest.html_url})` : 'none'})`,
+              `Last refreshed: **${refreshed}**`
+            ].join('  \n');
+            const updated = readme.slice(0, startIndex + start.length) + '\n' + stats + '\n' + readme.slice(endIndex);
+
+            if (updated === readme) {
+              core.info('README is already current.');
+              return;
+            }
+
+            fs.writeFileSync(path, updated);
+
+      - name: Commit refreshed README
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: 'docs: refresh profile README stats'
+          file_pattern: README.md
